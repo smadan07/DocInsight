@@ -1,0 +1,10 @@
+This is a small sample document for trying out Smart Document Insights.
+
+When you upload it, the backend extracts the text, splits it into chunks, embeds
+those chunks locally with the all-MiniLM-L6-v2 model (384-dimensional vectors,
+no API key required), and indexes them in a FAISS vector store.
+
+You can then run a semantic search over it, or chat with the document to get
+source-cited answers. With no LLM key configured the answers are placeholders,
+while retrieval and citations remain fully functional. Add your own key from the
+sidebar to get real generated answers.

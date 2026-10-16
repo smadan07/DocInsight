@@ -1,0 +1,39 @@
+# Build context hygiene — keep the image small and reproducible.
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Frontend (rebuilt inside the image; never copy host artifacts)
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Data, secrets, local state
+data/
+uploads/
+*.index
+*.map.json
+.env
+.env.*
+
+# Docs, tests, VCS, IDE
+docs/
+tests/
+.git/
+.github/
+.gitignore
+.vscode/
+.idea/
+.DS_Store
+*.log
+
+# Agent / misc
+.gemini/
+.agent/
+.claude/
+README.md
