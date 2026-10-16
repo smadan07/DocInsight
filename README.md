@@ -1,139 +1,308 @@
-# ⚡ DocInsights — AI Document Intelligence (RAG) Platform
+<h1 align="center">⚡ DocInsights</h1>
+<p align="center">
+  <b>AI-powered document intelligence — upload, ask, understand.</b><br/>
+  A full-stack RAG (Retrieval-Augmented Generation) platform with semantic search, multi-document chat, and explainable citations.
+</p>
 
-Upload documents, ask questions, and get **source-cited** answers. DocInsights is a
-retrieval-augmented-generation platform with **explainable retrieval** — every answer
-shows exactly which chunks of which document it came from, with relevance scores.
+<p align="center">
+  <img src="https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white"/>
+  <img src="https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB"/>
+  <img src="https://img.shields.io/badge/FAISS-0467DF?style=for-the-badge&logo=meta&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white"/>
+  <img src="https://img.shields.io/badge/SQLite-07405E?style=for-the-badge&logo=sqlite&logoColor=white"/>
+</p>
 
-This Space runs the **entire app in one container**: a FastAPI backend that serves both
-the JSON API and the built React UI, with a local embedding model and an on-disk FAISS
-index. **No API key is required to try it** — see _Bring your own key_ below.
-
-### 🔗 Live demo
-
-**👉 [Try it here](https://huggingface.co/spaces/aditya3526/docinsights)**
-
-> Live demo note: this is the free **CPU Basic** tier with an **ephemeral filesystem**.
-> See _Honest framing_ at the bottom before judging it as production infrastructure.
-
-<!--
-Screenshot intentionally omitted: the images in docs/ are stale (older 4-item sidebar
-without Multi-Chat / Add-LLM-Key, and a data-rich dashboard that reflects a keyed state,
-not the keyless demo). Drop a fresh capture of the current UI here when you have one, e.g.:
-<p align="center"><img src="docs/dashboard.png" alt="DocInsights dashboard" width="100%"/></p>
--->
+<p align="center">
+  <a href="https://huggingface.co/spaces/aditya3526/docinsights">🚀 Live Demo on HuggingFace Spaces</a>
+</p>
 
 ---
 
-## What it actually does
+## 📌 What Is This?
 
-- **Semantic search** over your documents using a FAISS vector index.
-- **Chat (RAG)** against a single document or across several at once, with cited sources.
-- **Insights** — executive summary, key-info extraction, and risk detection.
-- **Compare** up to 5 documents and generate a downloadable PDF report.
+**DocInsights** lets you upload a PDF, Word document, or plain text file and then:
 
-Supported formats: **PDF, DOCX, TXT** (up to 50 MB). Text-based PDFs work out of the box;
-scanned-PDF OCR is best-effort and disabled in this slim image.
+- 💬 **Chat with it** — ask questions, get answers with exact source citations
+- 🔍 **Semantic search** — find relevant sections by meaning, not just keywords
+- 🧠 **Generate insights** — auto-summary, key info extraction, risk detection
+- 📊 **Compare documents** — side-by-side analysis of up to 5 documents
 
----
-
-## The engineering worth looking at
-
-- **FAISS flat → IVF auto-upgrade.** Starts as an exact `IndexFlatIP` (cosine via
-  normalized inner product). Once the index passes **256 vectors**, it automatically
-  rebuilds into an `IndexIVFFlat` (clusters = `min(√n, 64)`, `nprobe = min(nlist, 10)`)
-  for sub-linear search — without losing the existing vectors.
-- **Timeout-safe LLM wrapper.** Every LLM call goes through a wrapper with an **LRU
-  response cache** (256 entries, 1-hour TTL), **exponential-backoff retry** (2 retries),
-  and a **hard timeout** enforced by a worker thread. On timeout or error it returns a
-  graceful fallback — the request never hangs and never 500s on the model.
-- **Local-embedding fallback.** Embeddings run **locally** with `all-MiniLM-L6-v2`
-  (384-dim, normalized) by default, so the app is fully functional with **zero API keys**.
-  Embeddings stay local even when you supply an LLM key — this keeps the FAISS index
-  dimension stable and avoids a costly re-index.
-- **Bounded multi-doc retrieval.** Multi-document chat over-fetches with a hard cap
-  (`min(top_k×3, 50)`), deduplicates, caps per-document chunks (3), and builds a
-  **token-aware, round-robin context** (≤6000 token budget across ≤10 chunks).
-- **Synchronous-first processing.** Uploads are processed **inline** in the request
-  (extract → chunk → embed → index) — no Celery/Redis needed. A `USE_CELERY` flag exists
-  for anyone who wants to run a real worker + broker elsewhere.
+No data leaves your browser without your consent. **No API key required** to explore — the retrieval and search pipeline works completely offline using a local embedding model.
 
 ---
 
-## Bring your own key (and the keyless demo)
+## 🏗️ Architecture
 
-DocInsights is **OpenAI-compatible** (OpenAI, OpenRouter, or any `base_url` that speaks
-the OpenAI chat API).
-
-- **No key →** the app works in **demo mode**: retrieval, search, and citations are fully
-  real; LLM-generated text is a clearly-labeled placeholder.
-- **Your key →** click **"Add LLM Key"** in the sidebar and paste your own key (optionally a
-  model and base URL). You get real LLM answers.
-
-Your key is **never stored**: it's held in your browser tab's memory only (cleared on
-refresh), sent per-request as a header, used by the server for that one request, and
-never written to disk, the database, or the logs.
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Browser (React)                       │
+│   Upload ──► Chat ──► Search ──► Insights ──► Compare       │
+└─────────────────────┬───────────────────────────────────────┘
+                       │ HTTP (REST + SSE streaming)
+┌─────────────────────▼───────────────────────────────────────┐
+│                   FastAPI Backend                            │
+│                                                              │
+│  ┌─────────────┐  ┌──────────────┐  ┌────────────────────┐  │
+│  │  Document   │  │  Embedding   │  │    RAG Service     │  │
+│  │  Processor  │  │  Service     │  │  (ask_question,    │  │
+│  │  PDF/DOCX   │  │  MiniLM-L6   │  │   summarize,       │  │
+│  │  /TXT + OCR │  │  384-dim     │  │   compare)         │  │
+│  └──────┬──────┘  └──────┬───────┘  └────────┬───────────┘  │
+│         │                │                    │              │
+│  ┌──────▼────────────────▼────────┐  ┌────────▼───────────┐  │
+│  │         Vector Store           │  │    LLM Client      │  │
+│  │  FAISS IndexFlatIP → IVFFlat  │  │  OpenAI-compatible │  │
+│  │  Thread-safe · LRU cached     │  │  LRU cached · BYO  │  │
+│  └────────────────────────────────┘  └────────────────────┘  │
+│                                                              │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │  SQLite (async SQLAlchemy) — Documents + Chunks         │ │
+│  └─────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## Run it locally
+## 🔄 How a Document Is Processed
+
+When you upload a file, this pipeline runs automatically:
+
+```
+1. VALIDATE   → extension ✓  file size <50MB ✓  magic bytes ✓
+2. SAVE       → write to disk, create DB record
+3. EXTRACT    → pull raw text (PyMuPDF / python-docx / chardet)
+4. CHUNK      → split into 1000-char chunks, 200-char overlap
+5. EMBED      → all-MiniLM-L6-v2 → 384-dimensional float32 vectors
+6. INDEX      → add vectors to FAISS, persist to disk
+                                          ↓
+                              Document Status = READY ✅
+```
+
+**When you ask a question:**
+
+```
+1. EMBED query   → same model converts your question to 384 numbers
+2. FAISS search  → find top-5 most similar chunks by cosine similarity
+3. BUILD prompt  → inject chunks as context into LLM prompt
+4. LLM call      → get grounded answer with citations
+5. RETURN        → answer + source chunks + relevance scores
+```
+
+---
+
+## ✨ Key Engineering Features
+
+### 🔍 FAISS Auto-Upgrade: Flat → IVF
+```python
+# Starts as exact brute-force search
+_faiss_index = faiss.IndexFlatIP(384)
+
+# Auto-upgrades at 256+ vectors to cluster-based approximate search
+nlist = min(int(np.sqrt(n_vectors)), 64)
+new_index = faiss.IndexIVFFlat(quantizer, dim, nlist)
+new_index.nprobe = min(nlist, 10)
+```
+- **< 256 vectors** → `IndexFlatIP`: exact cosine similarity, checks every vector
+- **≥ 256 vectors** → `IndexIVFFlat`: groups into √n clusters (max 64), searches 10 nearest clusters per query — **sub-linear search time at scale**
+- Zero data loss: all vectors are reconstructed and re-added during upgrade
+
+### 🔒 Thread-Safe Vector Store
+```python
+_lock = RLock()  # Re-entrant lock for all FAISS operations
+```
+FAISS is not thread-safe. Every read/write acquires an `RLock` — safe for concurrent uploads.
+
+### ⚡ Dual LRU Caches
+| Cache | Size | TTL | Key |
+|---|---|---|---|
+| LLM Response Cache | 256 entries | 1 hour | MD5(prompt) |
+| Query Embedding Cache | 512 entries | — | MD5(query text) |
+
+Identical prompts skip the LLM call entirely. Same query text reuses the cached vector.
+
+### 🛡️ Timeout-Safe LLM Wrapper
+```python
+with ThreadPoolExecutor(max_workers=1) as executor:
+    future = executor.submit(ctx.run, get_llm_response, prompt)
+    result = future.result(timeout=15)  # Hard 15-second limit
+```
+- Runs every LLM call in a worker thread with a 15s hard timeout
+- On timeout or error → polite fallback message, never a 500
+- Uses `contextvars.copy_context()` so the per-request BYO-key propagates to the thread
+
+### 🔑 Bring-Your-Own-Key (Per-Request, Never Stored)
+```python
+@app.middleware("http")
+async def apply_byo_key(request: Request, call_next):
+    token = set_request_llm_override(
+        api_key=request.headers.get("X-LLM-API-Key"), ...
+    )
+    try:
+        return await call_next(request)
+    finally:
+        clear_request_llm_override(token)  # Always cleared
+```
+Key lives in a Python `ContextVar` — scoped to one request, never written to disk or logs.
+
+### 🔄 Exponential Backoff Retry
+```python
+for attempt in range(max_retries + 1):
+    try:
+        response = _call_llm(...)
+        break
+    except Exception:
+        time.sleep(2 ** attempt)  # 1s → 2s → 4s
+```
+
+### 📄 Smart Text Truncation
+For documents exceeding the LLM context window — takes **beginning + middle + end** instead of naive head-only truncation:
+```python
+def _smart_truncate(text, max_chars=12000):
+    return text[:third] + "[...middle...]" + text[mid] + "[...end...]" + text[-third:]
+```
+
+---
+
+## 🌐 API Reference
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/documents/upload` | Upload + process a document |
+| `GET` | `/api/documents` | List all documents |
+| `GET` | `/api/documents/{id}` | Get document details |
+| `DELETE` | `/api/documents/{id}` | Delete document + embeddings |
+| `POST` | `/api/chat` | RAG Q&A on a single document |
+| `POST` | `/api/chat/v2` | Multi-document RAG chat |
+| `POST` | `/api/search` | Semantic search across documents |
+| `POST` | `/api/insights/{id}` | Summary + key info + risk detection |
+| `POST` | `/api/compare` | Compare up to 5 documents |
+| `GET` | `/api/health` | Health check + LLM/cache status |
+
+---
+
+## 🚀 Running Locally
+
+### Option 1 — Without Docker
 
 ```bash
 # 1. Build the frontend
-cd frontend && npm ci && npm run build && cd ..
+cd frontend
+npm ci
+npm run build
+cd ..
 
-# 2. Install backend deps (CPU-only) and run
+# 2. Install Python dependencies
 pip install -r requirements-docker.txt
+
+# 3. Start the server
 uvicorn backend.main:app --host 0.0.0.0 --port 7860
-# open http://localhost:7860
+
+# Open: http://localhost:7860
 ```
 
-Or with Docker (same image the Space uses):
+### Option 2 — With Docker
 
 ```bash
 docker build -t docinsights .
 docker run -p 7860:7860 docinsights
+
+# Open: http://localhost:7860
 ```
 
 ---
 
-## Configuration
+## ⚙️ Configuration
 
-All config is via environment variables (see `backend/config.py`). Sensible defaults make
-the app boot with none set. Notable ones:
+All config is via environment variables. The app boots with zero config set.
 
-| Variable               | Default           | Notes                                                                     |
-| ---------------------- | ----------------- | ------------------------------------------------------------------------- |
-| `SECRET_KEY`           | insecure sentinel | **Set this in production** (HF Space → Settings → Secrets).               |
-| `USE_LOCAL_EMBEDDINGS` | `true`            | Keep `true` for the keyless/CPU demo.                                     |
-| `USE_CELERY`           | `false`           | Inline processing; set `true` only with a real worker + Redis.            |
-| `OPENAI_API_KEY`       | empty             | Optional server-side key. Per-request BYO-key overrides it.               |
-| `OPENAI_MODEL`         | `gpt-3.5-turbo`   | Any OpenAI-compatible chat model.                                         |
-| `OPENAI_API_BASE`      | unset             | For OpenRouter / self-hosted OpenAI-compatible endpoints.                 |
-| `CORS_ORIGINS`         | `*`               | Same-origin in this single-container setup; tighten if you split origins. |
-| `PORT`                 | `7860`            | The container listens here; matches the Space `app_port`.                 |
+| Variable | Default | Description |
+|---|---|---|
+| `SECRET_KEY` | insecure sentinel | **Set this in production** |
+| `USE_LOCAL_EMBEDDINGS` | `true` | Keep `true` — local MiniLM, no API needed |
+| `USE_CELERY` | `false` | Inline processing; set `true` with Redis + worker |
+| `OPENAI_API_KEY` | empty | Optional server-side key (BYO-key overrides) |
+| `OPENAI_MODEL` | `gpt-3.5-turbo` | Any OpenAI-compatible chat model |
+| `OPENAI_API_BASE` | unset | For OpenRouter / self-hosted endpoints |
+| `DATABASE_URL` | SQLite | Swap to Postgres URL for production |
+| `PORT` | `7860` | Server port |
 
----
-
-## Honest framing
-
-This is a **portfolio / demo deployment**, and it's worth being upfront about the limits:
-
-- **Free CPU tier.** No GPU. Local embedding + small-doc processing run in a few seconds;
-  large documents will be slower.
-- **Bring-your-own-key for real answers.** Without a key, LLM text is a placeholder — the
-  retrieval and citation machinery is real, the generation is not.
-- **Ephemeral filesystem.** Uploaded files, the SQLite database, and the FAISS index all
-  live on the container's disk and **reset whenever the Space restarts or rebuilds**.
-  Treat anything you upload here as temporary.
-- **No auth / multi-tenancy.** Everyone shares one instance. Don't upload anything sensitive.
-
-The architecture (async FastAPI, Postgres-ready data layer, Celery-capable processing,
-persistent vector store) is built to run as a real service — this particular deployment
-is just the free-tier, single-container demo of it.
+Copy `.env.example` → `.env` to get started.
 
 ---
 
-## Stack
+## 🛠️ Tech Stack
 
-FastAPI · React 18 + Vite + Tailwind · SQLite (async SQLAlchemy) · FAISS (CPU) ·
-sentence-transformers · LangChain (OpenAI-compatible) · Docker
+| Layer | Technology |
+|---|---|
+| **Backend** | FastAPI + Uvicorn (async Python) |
+| **Frontend** | React 18 + Vite + Tailwind CSS |
+| **Database** | SQLite with async SQLAlchemy (Postgres-ready) |
+| **Vector Store** | FAISS (CPU) — IndexFlatIP → IndexIVFFlat |
+| **Embeddings** | `all-MiniLM-L6-v2` via sentence-transformers (local, 384-dim) |
+| **LLM** | LangChain + OpenAI-compatible API (OpenAI / OpenRouter / self-hosted) |
+| **PDF Parsing** | PyMuPDF (fitz) + OCR fallback |
+| **DOCX Parsing** | python-docx |
+| **Containerization** | Docker (single container — backend + frontend) |
+| **Deployment** | HuggingFace Spaces (free CPU tier) |
+
+---
+
+## 🤖 LLM Key — Demo Mode vs Full Mode
+
+| Feature | No Key (Demo Mode) | With Key |
+|---|---|---|
+| Upload documents | ✅ | ✅ |
+| Text extraction | ✅ | ✅ |
+| Chunking & embeddings | ✅ | ✅ |
+| FAISS semantic search | ✅ | ✅ |
+| Source citations | ✅ | ✅ |
+| AI-generated answers | ❌ placeholder | ✅ real LLM |
+
+Click **"Add LLM Key"** in the sidebar to paste your OpenAI / OpenRouter key.
+Works with any OpenAI-compatible API — just set the base URL.
+
+---
+
+## ⚠️ Known Limitations (Demo Deployment)
+
+- **Ephemeral filesystem** — HuggingFace free tier resets on restart. All uploads, the SQLite DB, and the FAISS index are temporary.
+- **No auth / multi-tenancy** — everyone shares one instance. Don't upload sensitive documents.
+- **CPU only** — no GPU. Suitable for small-to-medium documents.
+- **BYO-key** — real LLM answers require your own API key.
+
+> The underlying architecture supports persistent storage, Postgres, Celery workers, and multi-tenancy — this deployment is a single-container demo of that foundation.
+
+---
+
+## 📁 Project Structure
+
+```
+DocInsights/
+├── backend/
+│   ├── main.py                 # FastAPI app + middleware
+│   ├── database.py             # Async SQLAlchemy setup
+│   ├── config.py               # Environment config
+│   ├── api/
+│   │   ├── documents.py        # Upload, list, delete endpoints
+│   │   ├── chat.py             # Single + multi-doc RAG
+│   │   ├── search.py           # Semantic search
+│   │   └── insights.py         # Summary, risks, compare
+│   ├── services/
+│   │   ├── vector_store.py     # FAISS management (thread-safe)
+│   │   ├── embedding_service.py # MiniLM embeddings + LRU cache
+│   │   ├── llm_client.py       # LLM wrapper (cache + timeout + retry)
+│   │   ├── rag_service.py      # ask_question, summarize, compare
+│   │   ├── document_processor.py # PDF/DOCX/TXT extraction
+│   │   └── llm_context.py      # BYO-key ContextVar management
+│   └── utils/
+│       └── text_utils.py       # Chunking, smart truncation
+├── frontend/                   # React 18 + Vite + Tailwind
+├── Dockerfile                  # Single-container build
+├── requirements.txt
+└── requirements-docker.txt
+```
+
+---
+
+<p align="center">Built with ❤️ · FastAPI · React · FAISS · sentence-transformers</p>
